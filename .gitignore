@@ -6,6 +6,11 @@ __pycache__/
 # C extensions
 *.so
 
+.python-version
+
+# Кэш Ruff
+.ruff_cache/
+
 # Distribution / packaging
 .Python
 build/
