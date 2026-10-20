@@ -51,6 +51,8 @@ finalproject_<фамилия>_<группа>/
 └── README.md
 ```
 
+![Пример работы](https://github.com/artich02/finalproject_tyshkevich_M26-555/blob/main/demo.gif)
+
 ## Запуск проекта
 
 ```text
