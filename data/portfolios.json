@@ -15,6 +15,17 @@
       },
       "EUR": {
         "balance": 100.0
+      },
+      "SOL": {
+        "balance": 1.0
+      }
+    }
+  },
+  {
+    "user_id": 3,
+    "wallets": {
+      "BTC": {
+        "balance": 0.04
       }
     }
   }

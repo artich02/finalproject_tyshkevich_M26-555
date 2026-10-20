@@ -124,13 +124,16 @@ class RateService:
         def resolve_usd_rate(code: str) -> tuple[float, str]:
             if code == "USD":
                 return 1.0, datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
+
             pair_key = f"{code}_USD"
-            if pair_key in rates_data and "rate" in rates_data[pair_key]:
+            pairs_dict = rates_data.get("pairs", rates_data)
+
+            if pair_key in pairs_dict and "rate" in pairs_dict[pair_key]:
                 return (
-                    float(rates_data[pair_key]["rate"]),
-                    rates_data[pair_key].get("updated_at", ""),
+                    float(pairs_dict[pair_key]["rate"]),
+                    pairs_dict[pair_key].get("updated_at", ""),
                 )
-            raise ApiRequestError(f"Курс для {code}→USD не найден в кеше")
+            raise ApiRequestError(f"Курс для {code}USD не найден в кеше")
 
         src_usd, updated_at = resolve_usd_rate(src_curr.code)
         dst_usd, _ = resolve_usd_rate(dst_curr.code)

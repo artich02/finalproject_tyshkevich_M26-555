@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from prettytable import PrettyTable
+
 from valutatrade_hub.core.currencies import get_supported_currencies
 from valutatrade_hub.core.exceptions import (
     ApiRequestError,
@@ -15,6 +17,7 @@ from valutatrade_hub.core.usecases import (
 )
 from valutatrade_hub.core.utils import parse_command_line
 from valutatrade_hub.infra.settings import SettingsLoader
+from valutatrade_hub.parser_service.updater import RatesUpdater
 
 
 class CommandLineInterface:
@@ -30,6 +33,7 @@ class CommandLineInterface:
             auth_service=self.auth_service,
             rate_service=self.rate_service,
         )
+        self.rates_updater = RatesUpdater()
 
     @staticmethod
     def _parse_named_args(tokens: list[str]) -> dict[str, str]:
@@ -197,7 +201,7 @@ class CommandLineInterface:
         try:
             direct_rate, updated_at = self.rate_service.get_rate(src, dst)
             reverse_rate, _ = self.rate_service.get_rate(dst, src)
-            clean_time = updated_at.replace("T", " ")
+            clean_time = updated_at.replace("T", " ").replace("Z", "")
             print(f"Курс {src}→{dst}: {direct_rate:.8f} (обновлено: {clean_time})")
             print(f"Обратный курс {dst}→{src}: {reverse_rate:.2f}")
         except CurrencyNotFoundError as exc:
@@ -208,6 +212,112 @@ class CommandLineInterface:
             print(f"Курс {src}→{dst} недоступен. Повторите попытку позже")
         except ValidationError as exc:
             print(exc)
+
+    def handle_update_rates(self, args: dict[str, str]) -> None:
+        source_filter = args.get("source")
+        print("[ИНФО] Запуск обновления курсов...")
+
+        count, last_refresh, errors = self.rates_updater.run_update(source_filter)
+
+        if not source_filter or "coingecko" in source_filter.lower():
+            if any("CoinGecko" in e for e in errors):
+                print("[ОШИБКА] Не удалось получить данные от CoinGecko: Сбой сети")
+            else:
+                print("[ИНФО] Получение данных от CoinGecko... Успешно (3 курса)")
+
+        if not source_filter or "exchangerate" in source_filter.lower():
+            if any("ExchangeRate" in e for e in errors):
+                print(
+                    "[ОШИБКА] Не удалось получить данные от ExchangeRate-API: "
+                    "Сбой сети"
+                )
+            else:
+                print(
+                    "[ИНФО] Получение данных от ExchangeRate-API... "
+                    "Успешно (3 курса)"
+                )
+
+        if errors:
+            print(
+                "Обновление завершено с ошибками. "
+                "Подробности смотрите в logs/actions.log"
+            )
+            return
+
+        print(
+            f"[ИНФО] Запись {count} курсов в "
+            f"{self.rates_updater.config.RATES_FILE_PATH}..."
+        )
+        print(
+            f"Обновление успешно завершено. Всего обновлено курсов: {count}. "
+            f"Время обновления: {last_refresh}"
+        )
+
+    def handle_show_rates(self, args: dict[str, str]) -> None:
+        target_curr = args.get("currency")
+        top_arg = args.get("top")
+        base_arg = args.get("base", "USD").upper()
+
+        snapshot = self.rates_updater.storage.load_rates_snapshot()
+        pairs = snapshot.get("pairs", {})
+        last_refresh = snapshot.get("last_refresh", "")
+
+        if not pairs:
+            print(
+                "Локальный кеш курсов пуст. "
+                "Выполните 'update-rates', чтобы загрузить данные"
+            )
+            return
+
+        if target_curr:
+            clean_curr = target_curr.strip().upper()
+            found = False
+            for pair, data in pairs.items():
+                if pair.startswith(f"{clean_curr}_"):
+                    rate_val = data.get("rate", 0.0)
+                    print(f"Курсы из локального кеша (обновлено: {last_refresh}):")
+                    print(f"- {pair}: {rate_val:.5f}")
+                    found = True
+                    break
+            if not found:
+                print(f"Курс для '{clean_curr}' не найден в кеше")
+            return
+
+        if top_arg:
+            try:
+                top_limit = int(top_arg)
+            except ValueError:
+                print("Значение --top должно быть целым числом")
+                return
+
+            crypto_pairs = [
+                (pair, data)
+                for pair, data in pairs.items()
+                if any(c in pair for c in ("BTC", "ETH", "SOL"))
+            ]
+            crypto_pairs.sort(key=lambda x: x[1].get("rate", 0.0), reverse=True)
+            selected = crypto_pairs[:top_limit]
+
+            print(f"Курсы из локального кеша (обновлено: {last_refresh}):")
+            for pair, data in selected:
+                print(f"- {pair}: {data.get('rate', 0.0):.2f}")
+            return
+
+        table = PrettyTable()
+        table.field_names = [
+            "Валютная пара",
+            f"Курс к {base_arg}",
+            "Источник",
+            "Дата обновления",
+        ]
+        for pair, data in sorted(pairs.items()):
+            table.add_row([
+                pair,
+                f"{data.get('rate', 0.0):.6f}",
+                data.get("source", "Н/Д"),
+                data.get("updated_at", ""),
+            ])
+        print(table)
 
     def run(self) -> None:
         while True:
@@ -237,6 +347,10 @@ class CommandLineInterface:
                     self.handle_sell(named_args)
                 elif cmd == "get-rate":
                     self.handle_get_rate(named_args)
+                elif cmd == "update-rates":
+                    self.handle_update_rates(named_args)
+                elif cmd == "show-rates":
+                    self.handle_show_rates(named_args)
                 else:
                     print(f"Неизвестная команда: {cmd}")
             except (KeyboardInterrupt, EOFError):
